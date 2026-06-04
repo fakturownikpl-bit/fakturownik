@@ -15,28 +15,31 @@ import {
   Modal,
 } from '@/components/ui'
 import { generateInvoiceId, today, daysFromNow, formatZl } from '@/lib/utils'
-import { VAT_RATES, type InvoiceItem, type InvoiceStatus } from '@/types'
+import { VAT_RATES, type InvoiceItem, type InvoiceStatus, type Invoice } from '@/types'
 import type { Client } from '@/types'
 
 const emptyItem = (): InvoiceItem => ({ opis: '', ilosc: 1, cena: 0, vat: 23 })
 
 interface InvoiceFormProps {
   presetClientId?: number
+  editInvoice?: Invoice
 }
 
-export function InvoiceForm({ presetClientId }: InvoiceFormProps) {
+export function InvoiceForm({ presetClientId, editInvoice }: InvoiceFormProps) {
   const router = useRouter()
-  const { addInvoice, nextId } = useInvoices()
+  const { addInvoice, updateInvoice, nextId } = useInvoices()
   const { clients, addClient } = useClients()
   const { company } = useCompany()
 
-  const [klientId, setKlientId] = useState<number | ''>(presetClientId ?? '')
-  const [data, setData] = useState(today())
-  const [termin, setTermin] = useState(daysFromNow(14))
-  const [uwagi, setUwagi] = useState('')
+  const isEdit = !!editInvoice
+
+  const [klientId, setKlientId] = useState<number | ''>(editInvoice?.klientId ?? presetClientId ?? '')
+  const [data, setData] = useState(editInvoice?.data ?? today())
+  const [termin, setTermin] = useState(editInvoice?.termin ?? daysFromNow(14))
+  const [uwagi, setUwagi] = useState(editInvoice?.uwagi ?? '')
   const [konto, setKonto] = useState(company.nr_konta)
-  const [pozycje, setPozycje] = useState<InvoiceItem[]>([emptyItem()])
-  const [nr, setNr] = useState(generateInvoiceId(nextId))
+  const [pozycje, setPozycje] = useState<InvoiceItem[]>(editInvoice?.pozycje ?? [emptyItem()])
+  const [nr, setNr] = useState(editInvoice?.id ?? generateInvoiceId(nextId))
   const [alert, setAlert] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -66,7 +69,11 @@ export function InvoiceForm({ presetClientId }: InvoiceFormProps) {
     if (!valid.length) { setAlert({ type: 'err', msg: 'Dodaj co najmniej jedną pozycję.' }); return }
     setSaving(true)
     try {
-      await addInvoice({ id: nr, klientId: Number(klientId), data, termin, status, pozycje: valid, uwagi })
+      if (isEdit) {
+        await updateInvoice({ ...editInvoice, id: nr, klientId: Number(klientId), data, termin, status, pozycje: valid, uwagi })
+      } else {
+        await addInvoice({ id: nr, klientId: Number(klientId), data, termin, status, pozycje: valid, uwagi })
+      }
       router.push('/faktury')
     } catch (err) {
       setAlert({ type: 'err', msg: `Błąd zapisu: ${(err as Error).message}` })
@@ -132,7 +139,6 @@ export function InvoiceForm({ presetClientId }: InvoiceFormProps) {
       <Card className="mb-4">
         <SectionLabel>Pozycje faktury</SectionLabel>
 
-        {/* Header row */}
         <div className="hidden sm:grid grid-cols-[1fr_60px_90px_70px_28px] gap-2 mb-2">
           {['Opis', 'Ilość', 'Cena netto', 'VAT %', ''].map((h) => (
             <p key={h} className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -150,17 +156,13 @@ export function InvoiceForm({ presetClientId }: InvoiceFormProps) {
               className="w-full px-3 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400"
             />
             <input
-              type="number"
-              min="0"
-              step="0.5"
+              type="number" min="0" step="0.5"
               value={p.ilosc}
               onChange={(e) => updateItem(i, 'ilosc', parseFloat(e.target.value) || 0)}
               className="w-full px-2 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400 text-center"
             />
             <input
-              type="number"
-              min="0"
-              step="0.01"
+              type="number" min="0" step="0.01"
               value={p.cena}
               onChange={(e) => updateItem(i, 'cena', parseFloat(e.target.value) || 0)}
               className="w-full px-2 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400 text-right"
@@ -178,20 +180,14 @@ export function InvoiceForm({ presetClientId }: InvoiceFormProps) {
               onClick={() => removeItem(i)}
               className="text-zinc-400 hover:text-red-500 transition-colors text-lg leading-none"
               aria-label="Usuń pozycję"
-            >
-              ✕
-            </button>
+            >✕</button>
           </div>
         ))}
 
-        <Button
-          className="mt-2"
-          onClick={() => setPozycje((p) => [...p, emptyItem()])}
-        >
+        <Button className="mt-2" onClick={() => setPozycje((p) => [...p, emptyItem()])}>
           ＋ Dodaj pozycję
         </Button>
 
-        {/* Totals */}
         <div className="border-t border-zinc-100 dark:border-zinc-800 mt-4 pt-3 space-y-1 text-right">
           <div className="flex justify-end gap-10 text-sm text-zinc-500 dark:text-zinc-400">
             <span>Wartość netto</span><span>{formatZl(netto)}</span>
@@ -218,11 +214,10 @@ export function InvoiceForm({ presetClientId }: InvoiceFormProps) {
           💾 Zapisz projekt
         </Button>
         <Button variant="primary" onClick={() => save('nieoplacona')} disabled={saving}>
-          {saving ? 'Zapisywanie…' : '📤 Wystaw fakturę'}
+          {saving ? 'Zapisywanie…' : isEdit ? '💾 Zapisz zmiany' : '📤 Wystaw fakturę'}
         </Button>
       </div>
 
-      {/* Add client modal */}
       <Modal open={addClientOpen} onClose={() => setAddClientOpen(false)} title="Nowy klient">
         <div className="space-y-3">
           <Input label="Imię i nazwisko / Nazwa firmy" placeholder="Jan Kowalski" value={newClient.nazwa} onChange={(e) => setNewClient(p => ({ ...p, nazwa: e.target.value }))} />
