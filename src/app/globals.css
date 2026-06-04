@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: var(--font-geist-sans, system-ui, sans-serif);
+  --font-mono: var(--font-geist-mono, monospace);
+}
+
+/* Smooth scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 3px; }
+
+.dark *::-webkit-scrollbar-thumb { background: #3f3f46; }
+
+/* Transitions for theme switch */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+}
+
+/* Remove transition on motion-sensitive elements */
+button, input, select, textarea, a {
+  transition-property: opacity, box-shadow, transform, background-color, border-color, color;
+}
+
+/* Number inputs — remove spinners */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+input[type=number] { -moz-appearance: textfield; }
+
+/* Print styles */
+@media print {
+  .no-print { display: none !important; }
+}
