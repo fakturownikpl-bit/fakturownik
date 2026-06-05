@@ -98,17 +98,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       supabase.from('faktury').select('*').eq('user_id', user.id).order('created_at'),
     ])
 
+    const fd = firmaRes.data as Record<string, unknown> | null
+
     setState({
-      firma: firmaRes.data ? {
-        nazwa: firmaRes.data.nazwa,
-        nip: firmaRes.data.nip,
-        adres: firmaRes.data.adres,
-        email: firmaRes.data.email,
-        tel: firmaRes.data.tel,
-        nr_konta: firmaRes.data.nr_konta,
+      firma: fd ? {
+        nazwa: fd.nazwa as string ?? '',
+        nip: fd.nip as string ?? '',
+        adres: fd.adres as string ?? '',
+        email: fd.email as string ?? '',
+        tel: fd.tel as string ?? '',
+        nr_konta: fd.nr_konta as string ?? '',
       } : DEFAULT_COMPANY,
-      klienci: (klienciRes.data ?? []).map(rowToClient),
-      faktury: (fakturyRes.data ?? []).map(rowToInvoice),
+      klienci: (klienciRes.data ?? []).map((r) => rowToClient(r as Record<string, unknown>)),
+      faktury: (fakturyRes.data ?? []).map((r) => rowToInvoice(r as Record<string, unknown>)),
       loading: false,
     })
   }, [supabase])
@@ -180,7 +182,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [supabase])
 
   const updateClient = useCallback(async (client: Client) => {
-    const { error } = await supabase.from('klienci').update({ nazwa: client.nazwa, email: client.email, tel: client.tel, adres: client.adres, nip: client.nip }).eq('id', client.id)
+    const { error } = await supabase.from('klienci').update({
+      nazwa: client.nazwa,
+      email: client.email,
+      tel: client.tel,
+      adres: client.adres,
+      nip: client.nip,
+    }).eq('id', client.id)
     if (error) throw error
     setState((prev) => ({
       ...prev,
@@ -197,7 +205,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateCompany = useCallback(async (company: Company) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('firmy').upsert({ user_id: user.id, ...company }, { onConflict: 'user_id' })
+    const { error } = await supabase.from('firmy').upsert(
+      { user_id: user.id, ...company },
+      { onConflict: 'user_id' }
+    )
     if (error) throw error
     setState((prev) => ({ ...prev, firma: company }))
   }, [supabase])
@@ -213,7 +224,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [updateStatus, deleteInvoice, updateClient, deleteClient, updateCompany])
 
   return (
-    <AppContext.Provider value={{ state, addInvoice, updateInvoice, updateStatus, deleteInvoice, addClient, updateClient, deleteClient, updateCompany, dispatch }}>
+    <AppContext.Provider value={{
+      state, addInvoice, updateInvoice, updateStatus, deleteInvoice,
+      addClient, updateClient, deleteClient, updateCompany, dispatch,
+    }}>
       {children}
     </AppContext.Provider>
   )
