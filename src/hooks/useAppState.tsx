@@ -126,14 +126,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addInvoice = useCallback(async (inv: Omit<Invoice, 'id'> & { id: string }) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('faktury').insert({
+    const { error } = await (supabase.from('faktury') as any).insert({
       id: inv.id,
       user_id: user.id,
       klient_id: inv.klientId || null,
       data: inv.data,
       termin: inv.termin,
       status: inv.status,
-      pozycje: inv.pozycje as unknown as Record<string, unknown>[],
+      pozycje: inv.pozycje,
       uwagi: inv.uwagi,
     })
     if (error) throw error
@@ -148,7 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       status: inv.status,
       pozycje: inv.pozycje as unknown as Record<string, unknown>[],
       uwagi: inv.uwagi,
-    }).eq('id', inv.id)
+    } as any).eq('id', inv.id)
     if (error) throw error
     setState((prev) => ({
       ...prev,
@@ -157,7 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [supabase])
 
   const updateStatus = useCallback(async (id: string, status: InvoiceStatus) => {
-    const { error } = await supabase.from('faktury').update({ status }).eq('id', id)
+    const { error } = await supabase.from('faktury').update({ status } as any).eq('id', id)
     if (error) throw error
     setState((prev) => ({
       ...prev,
@@ -174,7 +174,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addClient = useCallback(async (client: Omit<Client, 'id'>): Promise<Client> => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not authenticated')
-    const { data, error } = await supabase.from('klienci').insert({ user_id: user.id, ...client }).select().single()
+    const { data, error } = await supabase.from('klienci').insert({ user_id: user.id, ...client } as any).select().single()
     if (error) throw error
     const newClient = rowToClient(data as unknown as Record<string, unknown>)
     setState((prev) => ({ ...prev, klienci: [...prev.klienci, newClient] }))
@@ -188,7 +188,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tel: client.tel,
       adres: client.adres,
       nip: client.nip,
-    }).eq('id', client.id)
+    } as any).eq('id', client.id)
     if (error) throw error
     setState((prev) => ({
       ...prev,
@@ -206,7 +206,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { error } = await supabase.from('firmy').upsert(
-      { user_id: user.id, ...company },
+      { user_id: user.id, ...company } as any,
       { onConflict: 'user_id' }
     )
     if (error) throw error
