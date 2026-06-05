@@ -21,8 +21,7 @@ function EditContent() {
 
   return (
     <AppShell title={`Edytuj ${invoice.id}`}>
-      {/* @ts-ignore */}
-      <InvoiceForm editInvoice={invoice} />
+      <InvoiceForm {...{ editInvoice: invoice } as any} />
     </AppShell>
   )
 }
