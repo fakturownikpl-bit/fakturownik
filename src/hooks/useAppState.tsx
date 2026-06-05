@@ -81,6 +81,9 @@ type LegacyAction =
 
 const AppContext = createContext<AppContextValue | null>(null)
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = (supabase: ReturnType<typeof createClient>) => supabase as any
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(defaultState())
   const supabase = createClient()
@@ -93,24 +96,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     const [firmaRes, klienciRes, fakturyRes] = await Promise.all([
-      supabase.from('firmy').select('*').eq('user_id', user.id).maybeSingle(),
-      supabase.from('klienci').select('*').eq('user_id', user.id).order('created_at'),
-      supabase.from('faktury').select('*').eq('user_id', user.id).order('created_at'),
+      db(supabase).from('firmy').select('*').eq('user_id', user.id).maybeSingle(),
+      db(supabase).from('klienci').select('*').eq('user_id', user.id).order('created_at'),
+      db(supabase).from('faktury').select('*').eq('user_id', user.id).order('created_at'),
     ])
 
     const fd = firmaRes.data as Record<string, unknown> | null
 
     setState({
       firma: fd ? {
-        nazwa: fd.nazwa as string ?? '',
-        nip: fd.nip as string ?? '',
-        adres: fd.adres as string ?? '',
-        email: fd.email as string ?? '',
-        tel: fd.tel as string ?? '',
-        nr_konta: fd.nr_konta as string ?? '',
+        nazwa: (fd.nazwa as string) ?? '',
+        nip: (fd.nip as string) ?? '',
+        adres: (fd.adres as string) ?? '',
+        email: (fd.email as string) ?? '',
+        tel: (fd.tel as string) ?? '',
+        nr_konta: (fd.nr_konta as string) ?? '',
       } : DEFAULT_COMPANY,
-      klienci: (klienciRes.data ?? []).map((r) => rowToClient(r as Record<string, unknown>)),
-      faktury: (fakturyRes.data ?? []).map((r) => rowToInvoice(r as Record<string, unknown>)),
+      klienci: (klienciRes.data ?? []).map((r: Record<string, unknown>) => rowToClient(r)),
+      faktury: (fakturyRes.data ?? []).map((r: Record<string, unknown>) => rowToInvoice(r)),
       loading: false,
     })
   }, [supabase])
@@ -126,7 +129,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addInvoice = useCallback(async (inv: Omit<Invoice, 'id'> & { id: string }) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await (supabase.from('faktury') as any).insert({
+    const { error } = await db(supabase).from('faktury').insert({
       id: inv.id,
       user_id: user.id,
       klient_id: inv.klientId || null,
@@ -136,20 +139,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       pozycje: inv.pozycje,
       uwagi: inv.uwagi,
     })
-    if (error) throw error
+    if (error) throw new Error(error.message)
     setState((prev) => ({ ...prev, faktury: [...prev.faktury, inv] }))
   }, [supabase])
 
   const updateInvoice = useCallback(async (inv: Invoice) => {
-    const { error } = await supabase.from('faktury').update({
+    const { error } = await db(supabase).from('faktury').update({
       klient_id: inv.klientId,
       data: inv.data,
       termin: inv.termin,
       status: inv.status,
-      pozycje: inv.pozycje as unknown as Record<string, unknown>[],
+      pozycje: inv.pozycje,
       uwagi: inv.uwagi,
-    } as any).eq('id', inv.id)
-    if (error) throw error
+    }).eq('id', inv.id)
+    if (error) throw new Error(error.message)
     setState((prev) => ({
       ...prev,
       faktury: prev.faktury.map((f) => (f.id === inv.id ? inv : f)),
@@ -157,8 +160,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [supabase])
 
   const updateStatus = useCallback(async (id: string, status: InvoiceStatus) => {
-    const { error } = await supabase.from('faktury').update({ status } as any).eq('id', id)
-    if (error) throw error
+    const { error } = await db(supabase).from('faktury').update({ status }).eq('id', id)
+    if (error) throw new Error(error.message)
     setState((prev) => ({
       ...prev,
       faktury: prev.faktury.map((f) => (f.id === id ? { ...f, status } : f)),
@@ -166,30 +169,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [supabase])
 
   const deleteInvoice = useCallback(async (id: string) => {
-    const { error } = await supabase.from('faktury').delete().eq('id', id)
-    if (error) throw error
+    const { error } = await db(supabase).from('faktury').delete().eq('id', id)
+    if (error) throw new Error(error.message)
     setState((prev) => ({ ...prev, faktury: prev.faktury.filter((f) => f.id !== id) }))
   }, [supabase])
 
   const addClient = useCallback(async (client: Omit<Client, 'id'>): Promise<Client> => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not authenticated')
-    const { data, error } = await supabase.from('klienci').insert({ user_id: user.id, ...client } as any).select().single()
-    if (error) throw error
-    const newClient = rowToClient(data as unknown as Record<string, unknown>)
+    const { data, error } = await db(supabase).from('klienci').insert({ user_id: user.id, ...client }).select().single()
+    if (error) throw new Error(error.message)
+    const newClient = rowToClient(data as Record<string, unknown>)
     setState((prev) => ({ ...prev, klienci: [...prev.klienci, newClient] }))
     return newClient
   }, [supabase])
 
   const updateClient = useCallback(async (client: Client) => {
-    const { error } = await supabase.from('klienci').update({
+    const { error } = await db(supabase).from('klienci').update({
       nazwa: client.nazwa,
       email: client.email,
       tel: client.tel,
       adres: client.adres,
       nip: client.nip,
-    } as any).eq('id', client.id)
-    if (error) throw error
+    }).eq('id', client.id)
+    if (error) throw new Error(error.message)
     setState((prev) => ({
       ...prev,
       klienci: prev.klienci.map((k) => (k.id === client.id ? client : k)),
@@ -197,19 +200,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [supabase])
 
   const deleteClient = useCallback(async (id: number) => {
-    const { error } = await supabase.from('klienci').delete().eq('id', id)
-    if (error) throw error
+    const { error } = await db(supabase).from('klienci').delete().eq('id', id)
+    if (error) throw new Error(error.message)
     setState((prev) => ({ ...prev, klienci: prev.klienci.filter((k) => k.id !== id) }))
   }, [supabase])
 
   const updateCompany = useCallback(async (company: Company) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('firmy').upsert(
-      { user_id: user.id, ...company } as any,
+    const { error } = await db(supabase).from('firmy').upsert(
+      { user_id: user.id, ...company },
       { onConflict: 'user_id' }
     )
-    if (error) throw error
+    if (error) throw new Error(error.message)
     setState((prev) => ({ ...prev, firma: company }))
   }, [supabase])
 
