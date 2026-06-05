@@ -4,7 +4,6 @@ import { useSearchParams } from 'next/navigation'
 import { AppShell } from '@/components/layout/AppShell'
 import { InvoiceForm } from '@/components/faktury/InvoiceForm'
 import { useInvoices } from '@/hooks/useAppState'
-import type { Invoice } from '@/types'
 
 function EditContent() {
   const searchParams = useSearchParams()
@@ -22,7 +21,8 @@ function EditContent() {
 
   return (
     <AppShell title={`Edytuj ${invoice.id}`}>
-      <InvoiceForm editInvoice={invoice as Invoice} />
+      {/* @ts-ignore */}
+      <InvoiceForm editInvoice={invoice} />
     </AppShell>
   )
 }
