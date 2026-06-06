@@ -371,3 +371,5 @@ export function InvoicePreview({
     </Modal>
   )
 }
+
+export { InvoicePreview as InvoiceForm }
