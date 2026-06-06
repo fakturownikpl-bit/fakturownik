@@ -1,240 +1,373 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { useInvoices, useClients } from '@/hooks/useAppState'
-import { useCompany } from '@/hooks/useAppState'
-import {
-  Button,
-  Input,
-  Select,
-  Textarea,
-  Card,
-  SectionLabel,
-  Alert,
-  Modal,
-} from '@/components/ui'
-import { generateInvoiceId, today, daysFromNow, formatZl } from '@/lib/utils'
-import { VAT_RATES, type InvoiceItem, type InvoiceStatus, type Invoice } from '@/types'
-import type { Client } from '@/types'
+import type { Invoice, Client, Company } from '@/types'
+import { Modal, Badge, Button } from '@/components/ui'
+import { calcTotals, formatZl, formatDate, resolvedStatus } from '@/lib/utils'
 
-const emptyItem = (): InvoiceItem => ({ opis: '', ilosc: 1, cena: 0, vat: 23 })
-
-interface InvoiceFormProps {
-  presetClientId?: number
-  editInvoice?: Invoice
+interface InvoicePreviewProps {
+  invoice: Invoice | null
+  client: Client | undefined
+  company: Company
+  onClose: () => void
+  onMarkPaid?: (id: string) => void
 }
 
-export function InvoiceForm({ presetClientId, editInvoice }: InvoiceFormProps) {
-  const router = useRouter()
-  const { addInvoice, updateInvoice, nextId } = useInvoices()
-  const { clients, addClient } = useClients()
-  const { company } = useCompany()
+async function generatePDF(invoice: Invoice, client: Client | undefined, company: Company) {
+  const { jsPDF } = await import('jspdf')
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
 
-  const isEdit = !!editInvoice
+  const { netto, vat: vatAmt, brutto } = calcTotals(invoice)
 
-  const [klientId, setKlientId] = useState<number | ''>(editInvoice?.klientId ?? presetClientId ?? '')
-  const [data, setData] = useState(editInvoice?.data ?? today())
-  const [termin, setTermin] = useState(editInvoice?.termin ?? daysFromNow(14))
-  const [uwagi, setUwagi] = useState(editInvoice?.uwagi ?? '')
-  const [konto, setKonto] = useState(company.nr_konta)
-  const [pozycje, setPozycje] = useState<InvoiceItem[]>(editInvoice?.pozycje ?? [emptyItem()])
-  const [nr, setNr] = useState(editInvoice?.id ?? generateInvoiceId(nextId))
-  const [alert, setAlert] = useState<{ type: 'ok' | 'err'; msg: string } | null>(null)
-  const [saving, setSaving] = useState(false)
+  const L = 15   // left margin
+  const R = 195  // right margin
+  const W = R - L
 
-  // New client modal
-  const [addClientOpen, setAddClientOpen] = useState(false)
-  const [newClient, setNewClient] = useState<Omit<Client, 'id'>>({
-    nazwa: '', email: '', tel: '', adres: '', nip: '',
-  })
-  const [addingClient, setAddingClient] = useState(false)
+  // ── Header ──────────────────────────────────────────────────────────
+  doc.setFillColor(24, 24, 27)
+  doc.rect(0, 0, 210, 28, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(18)
+  doc.setFont('helvetica', 'bold')
+  doc.text('FAKTURA VAT', L, 14)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'normal')
+  doc.text(invoice.id, L, 21)
+  doc.setFontSize(9)
+  doc.text(`Data wystawienia: ${formatDate(invoice.data)}   Termin płatności: ${formatDate(invoice.termin)}`, R, 21, { align: 'right' })
 
-  // Totals
-  const netto = pozycje.reduce((s, p) => s + p.ilosc * p.cena, 0)
-  const vatSum = pozycje.reduce((s, p) => s + p.ilosc * p.cena * (p.vat / 100), 0)
-  const gross = netto + vatSum
+  // ── Seller / Buyer ───────────────────────────────────────────────────
+  let y = 38
+  doc.setTextColor(30, 30, 30)
 
-  const updateItem = (i: number, field: keyof InvoiceItem, val: string | number) => {
-    setPozycje((prev) => prev.map((p, idx) => (idx === i ? { ...p, [field]: val } : p)))
-  }
+  // Sprzedawca
+  doc.setFontSize(7)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(120, 120, 120)
+  doc.text('SPRZEDAWCA', L, y)
+  y += 4
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(20, 20, 20)
+  doc.text(company.nazwa || '—', L, y)
+  y += 5
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(80, 80, 80)
+  if (company.nip) { doc.text(`NIP: ${company.nip}`, L, y); y += 4 }
+  if (company.adres) { doc.text(company.adres, L, y); y += 4 }
+  if (company.email) { doc.text(company.email, L, y); y += 4 }
+  if (company.tel) { doc.text(`Tel: ${company.tel}`, L, y); y += 4 }
 
-  const removeItem = (i: number) => {
-    setPozycje((prev) => prev.filter((_, idx) => idx !== i))
-  }
+  // Nabywca
+  let yb = 38
+  doc.setFontSize(7)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(120, 120, 120)
+  doc.text('NABYWCA', 110, yb)
+  yb += 4
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(20, 20, 20)
+  doc.text(client?.nazwa || '—', 110, yb)
+  yb += 5
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(80, 80, 80)
+  if (client?.nip) { doc.text(`NIP: ${client.nip}`, 110, yb); yb += 4 }
+  if (client?.adres) { doc.text(client.adres, 110, yb); yb += 4 }
+  if (client?.email) { doc.text(client.email, 110, yb); yb += 4 }
+  if (client?.tel) { doc.text(`Tel: ${client.tel}`, 110, yb); yb += 4 }
 
-  const save = async (status: InvoiceStatus) => {
-    if (!klientId) { setAlert({ type: 'err', msg: 'Wybierz klienta.' }); return }
-    const valid = pozycje.filter((p) => p.opis.trim())
-    if (!valid.length) { setAlert({ type: 'err', msg: 'Dodaj co najmniej jedną pozycję.' }); return }
-    setSaving(true)
-    try {
-      if (isEdit) {
-        await updateInvoice({ ...editInvoice, id: nr, klientId: Number(klientId), data, termin, status, pozycje: valid, uwagi })
-      } else {
-        await addInvoice({ id: nr, klientId: Number(klientId), data, termin, status, pozycje: valid, uwagi })
-      }
-      router.push('/faktury')
-    } catch (err) {
-      setAlert({ type: 'err', msg: `Błąd zapisu: ${(err as Error).message}` })
-      setSaving(false)
+  // ── Divider ──────────────────────────────────────────────────────────
+  y = Math.max(y, yb) + 6
+  doc.setDrawColor(220, 220, 220)
+  doc.line(L, y, R, y)
+  y += 6
+
+  // ── Table header ─────────────────────────────────────────────────────
+  doc.setFillColor(245, 245, 245)
+  doc.rect(L, y - 4, W, 8, 'F')
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(80, 80, 80)
+
+  const cols = { opis: L + 2, ilosc: 100, cena: 122, vat: 142, netto: 158, brutto: R }
+  doc.text('Opis', cols.opis, y)
+  doc.text('Ilość', cols.ilosc, y, { align: 'right' })
+  doc.text('Cena netto', cols.cena, y, { align: 'right' })
+  doc.text('VAT', cols.vat, y, { align: 'right' })
+  doc.text('Netto', cols.netto, y, { align: 'right' })
+  doc.text('Brutto', cols.brutto, y, { align: 'right' })
+  y += 6
+
+  // ── Table rows ───────────────────────────────────────────────────────
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(30, 30, 30)
+
+  invoice.pozycje.forEach((p, i) => {
+    const lineNetto = p.ilosc * p.cena
+    const lineBrutto = lineNetto * (1 + p.vat / 100)
+
+    if (i % 2 === 1) {
+      doc.setFillColor(250, 250, 250)
+      doc.rect(L, y - 4, W, 7, 'F')
     }
+
+    doc.setFontSize(9)
+    // truncate long descriptions
+    const opis = p.opis.length > 38 ? p.opis.substring(0, 36) + '…' : p.opis
+    doc.text(opis, cols.opis, y)
+    doc.text(String(p.ilosc), cols.ilosc, y, { align: 'right' })
+    doc.text(formatZl(p.cena), cols.cena, y, { align: 'right' })
+    doc.text(`${p.vat}%`, cols.vat, y, { align: 'right' })
+    doc.text(formatZl(lineNetto), cols.netto, y, { align: 'right' })
+    doc.setFont('helvetica', 'bold')
+    doc.text(formatZl(lineBrutto), cols.brutto, y, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+
+    doc.setDrawColor(235, 235, 235)
+    doc.line(L, y + 3, R, y + 3)
+    y += 8
+  })
+
+  // ── Totals ───────────────────────────────────────────────────────────
+  y += 4
+  const totalsX = 130
+
+  doc.setFontSize(9)
+  doc.setTextColor(80, 80, 80)
+  doc.text('Wartość netto:', totalsX, y)
+  doc.text(formatZl(netto), R, y, { align: 'right' })
+  y += 6
+  doc.text('VAT:', totalsX, y)
+  doc.text(formatZl(vatAmt), R, y, { align: 'right' })
+  y += 2
+  doc.setDrawColor(200, 200, 200)
+  doc.line(totalsX, y, R, y)
+  y += 5
+
+  doc.setFillColor(24, 24, 27)
+  doc.rect(totalsX - 2, y - 5, R - totalsX + 4, 9, 'F')
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(255, 255, 255)
+  doc.text('Do zapłaty:', totalsX, y)
+  doc.text(formatZl(brutto), R, y, { align: 'right' })
+  y += 10
+
+  // ── Payment info ─────────────────────────────────────────────────────
+  doc.setTextColor(60, 60, 60)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Forma płatności: przelew bankowy', L, y)
+  y += 5
+  if (company.nr_konta) {
+    doc.setFont('helvetica', 'bold')
+    doc.text(`Nr konta: ${company.nr_konta}`, L, y)
+    doc.setFont('helvetica', 'normal')
+    y += 5
+  }
+  if (invoice.uwagi) {
+    doc.setTextColor(100, 100, 100)
+    doc.text(`Uwagi: ${invoice.uwagi}`, L, y)
+    y += 5
   }
 
-  const handleAddClient = async () => {
-    if (!newClient.nazwa.trim()) return
-    setAddingClient(true)
+  // ── Footer ───────────────────────────────────────────────────────────
+  doc.setFillColor(245, 245, 245)
+  doc.rect(0, 280, 210, 17, 'F')
+  doc.setFontSize(7.5)
+  doc.setTextColor(140, 140, 140)
+  doc.text('Dokument wygenerowany przez Fakturownik', 105, 288, { align: 'center' })
+  doc.text(company.nazwa || '', 105, 293, { align: 'center' })
+
+  return doc
+}
+
+export function InvoicePreview({
+  invoice,
+  client,
+  company,
+  onClose,
+  onMarkPaid,
+}: InvoicePreviewProps) {
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [emailSent, setEmailSent] = useState(false)
+
+  if (!invoice) return null
+
+  const status = resolvedStatus(invoice)
+  const { netto, vat: vatAmt, brutto } = calcTotals(invoice)
+
+  const handleDownloadPDF = async () => {
+    const doc = await generatePDF(invoice, client, company)
+    doc.save(`${invoice.id.replace(/\//g, '_')}.pdf`)
+  }
+
+  const handleSendEmail = async () => {
+    if (!client?.email) {
+      alert('Klient nie ma przypisanego adresu email.')
+      return
+    }
+    setEmailLoading(true)
     try {
-      const created = await addClient(newClient)
-      setKlientId(created.id)
-      setAddClientOpen(false)
-      setNewClient({ nazwa: '', email: '', tel: '', adres: '', nip: '' })
+      const doc = await generatePDF(invoice, client, company)
+      const pdfBase64 = doc.output('datauristring').split(',')[1]
+
+      const res = await fetch('/api/send-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: client.email,
+          invoiceId: invoice.id,
+          pdfBase64,
+          clientName: client.nazwa,
+          brutto,
+        }),
+      })
+
+      if (!res.ok) throw new Error('Błąd wysyłki')
+      setEmailSent(true)
+      setTimeout(() => setEmailSent(false), 3000)
+    } catch {
+      alert('Nie udało się wysłać emaila. Sprawdź konfigurację SMTP.')
     } finally {
-      setAddingClient(false)
+      setEmailLoading(false)
     }
   }
 
   return (
-    <div className="max-w-2xl">
-      {alert && <Alert type={alert.type} message={alert.msg} />}
-
-      <Card className="mb-4">
-        <SectionLabel>Numer faktury</SectionLabel>
-        <Input label="Nr faktury" value={nr} onChange={(e) => setNr(e.target.value)} />
-
-        <SectionLabel>Dane klienta</SectionLabel>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Select
-            label="Klient"
-            value={klientId}
-            onChange={(e) => setKlientId(e.target.value ? Number(e.target.value) : '')}
-          >
-            <option value="">Wybierz klienta...</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.nazwa}</option>
-            ))}
-          </Select>
-          <div className="flex items-end">
-            <Button onClick={() => setAddClientOpen(true)}>＋ Nowy klient</Button>
-          </div>
-        </div>
-
-        <SectionLabel>Daty</SectionLabel>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Input
-            label="Data wystawienia"
-            type="date"
-            value={data}
-            onChange={(e) => setData(e.target.value)}
-          />
-          <Input
-            label="Termin płatności"
-            type="date"
-            value={termin}
-            onChange={(e) => setTermin(e.target.value)}
-          />
-        </div>
-      </Card>
-
-      <Card className="mb-4">
-        <SectionLabel>Pozycje faktury</SectionLabel>
-
-        <div className="hidden sm:grid grid-cols-[1fr_60px_90px_70px_28px] gap-2 mb-2">
-          {['Opis', 'Ilość', 'Cena netto', 'VAT %', ''].map((h) => (
-            <p key={h} className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-              {h}
-            </p>
-          ))}
-        </div>
-
-        {pozycje.map((p, i) => (
-          <div key={i} className="grid grid-cols-[1fr_60px_90px_70px_28px] gap-2 mb-2 items-center">
-            <input
-              value={p.opis}
-              placeholder="Opis pracy / materiałów"
-              onChange={(e) => updateItem(i, 'opis', e.target.value)}
-              className="w-full px-3 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400"
-            />
-            <input
-              type="number" min="0" step="0.5"
-              value={p.ilosc}
-              onChange={(e) => updateItem(i, 'ilosc', parseFloat(e.target.value) || 0)}
-              className="w-full px-2 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400 text-center"
-            />
-            <input
-              type="number" min="0" step="0.01"
-              value={p.cena}
-              onChange={(e) => updateItem(i, 'cena', parseFloat(e.target.value) || 0)}
-              className="w-full px-2 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400 text-right"
-            />
-            <select
-              value={p.vat}
-              onChange={(e) => updateItem(i, 'vat', parseInt(e.target.value))}
-              className="w-full px-2 py-1.5 text-sm rounded-lg border bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-400"
-            >
-              {VAT_RATES.map((v) => (
-                <option key={v} value={v}>{v}%</option>
-              ))}
-            </select>
-            <button
-              onClick={() => removeItem(i)}
-              className="text-zinc-400 hover:text-red-500 transition-colors text-lg leading-none"
-              aria-label="Usuń pozycję"
-            >✕</button>
-          </div>
-        ))}
-
-        <Button className="mt-2" onClick={() => setPozycje((p) => [...p, emptyItem()])}>
-          ＋ Dodaj pozycję
-        </Button>
-
-        <div className="border-t border-zinc-100 dark:border-zinc-800 mt-4 pt-3 space-y-1 text-right">
-          <div className="flex justify-end gap-10 text-sm text-zinc-500 dark:text-zinc-400">
-            <span>Wartość netto</span><span>{formatZl(netto)}</span>
-          </div>
-          <div className="flex justify-end gap-10 text-sm text-zinc-500 dark:text-zinc-400">
-            <span>VAT</span><span>{formatZl(vatSum)}</span>
-          </div>
-          <div className="flex justify-end gap-10 text-base font-semibold">
-            <span>Do zapłaty (brutto)</span><span>{formatZl(gross)}</span>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="mb-6">
-        <SectionLabel>Uwagi i sposób płatności</SectionLabel>
-        <div className="grid gap-3">
-          <Input label="Numer konta bankowego" value={konto} onChange={(e) => setKonto(e.target.value)} />
-          <Textarea label="Uwagi" rows={2} placeholder="Opcjonalne uwagi do faktury..." value={uwagi} onChange={(e) => setUwagi(e.target.value)} />
-        </div>
-      </Card>
-
-      <div className="flex gap-3 justify-end">
-        <Button onClick={() => save('projekt')} disabled={saving}>
-          💾 Zapisz projekt
-        </Button>
-        <Button variant="primary" onClick={() => save('nieoplacona')} disabled={saving}>
-          {saving ? 'Zapisywanie…' : isEdit ? '💾 Zapisz zmiany' : '📤 Wystaw fakturę'}
-        </Button>
+    <Modal
+      open={!!invoice}
+      onClose={onClose}
+      title={invoice.id}
+      width="max-w-2xl"
+    >
+      {/* Status row */}
+      <div className="flex items-center gap-2 mb-5">
+        <Badge status={status} />
+        <span className="text-xs text-zinc-400 dark:text-zinc-500">
+          Data wystawienia: {formatDate(invoice.data)}
+        </span>
+        <span className="text-xs text-zinc-400 dark:text-zinc-500">
+          Termin: {formatDate(invoice.termin)}
+        </span>
       </div>
 
-      <Modal open={addClientOpen} onClose={() => setAddClientOpen(false)} title="Nowy klient">
-        <div className="space-y-3">
-          <Input label="Imię i nazwisko / Nazwa firmy" placeholder="Jan Kowalski" value={newClient.nazwa} onChange={(e) => setNewClient(p => ({ ...p, nazwa: e.target.value }))} />
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="E-mail" type="email" value={newClient.email} onChange={(e) => setNewClient(p => ({ ...p, email: e.target.value }))} />
-            <Input label="Telefon" placeholder="600 000 000" value={newClient.tel} onChange={(e) => setNewClient(p => ({ ...p, tel: e.target.value }))} />
-          </div>
-          <Input label="Adres" placeholder="ul. Przykładowa 1, 00-000 Miasto" value={newClient.adres} onChange={(e) => setNewClient(p => ({ ...p, adres: e.target.value }))} />
-          <Input label="NIP (opcjonalnie — dla firm)" placeholder="123-456-78-90" value={newClient.nip} onChange={(e) => setNewClient(p => ({ ...p, nip: e.target.value }))} />
-          <div className="flex gap-2 justify-end pt-1">
-            <Button onClick={() => setAddClientOpen(false)}>Anuluj</Button>
-            <Button variant="primary" onClick={handleAddClient} disabled={addingClient}>
-              {addingClient ? 'Zapisywanie…' : '✓ Zapisz'}
-            </Button>
-          </div>
+      {/* Buyer / Seller */}
+      <div className="grid grid-cols-2 gap-6 mb-5">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-2">
+            Nabywca
+          </p>
+          {client ? (
+            <>
+              <p className="text-sm font-semibold">{client.nazwa}</p>
+              {client.nip && (
+                <p className="text-xs text-zinc-400 dark:text-zinc-500">NIP: {client.nip}</p>
+              )}
+              <p className="text-xs text-zinc-400 dark:text-zinc-500">{client.adres}</p>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-400">—</p>
+          )}
         </div>
-      </Modal>
-    </div>
+        <div className="text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-2">
+            Sprzedawca
+          </p>
+          <p className="text-sm font-semibold">{company.nazwa}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">NIP: {company.nip}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">{company.adres}</p>
+        </div>
+      </div>
+
+      {/* Line items */}
+      <div className="overflow-x-auto mb-4">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-100 dark:border-zinc-800">
+              {['Opis', 'Ilość', 'Cena netto', 'VAT', 'Netto', 'Brutto'].map((h) => (
+                <th
+                  key={h}
+                  className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 py-2 px-2 text-right first:text-left"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {invoice.pozycje.map((p, i) => {
+              const lineNetto = p.ilosc * p.cena
+              const lineBrutto = lineNetto * (1 + p.vat / 100)
+              return (
+                <tr key={i} className="border-b border-zinc-50 dark:border-zinc-800/60">
+                  <td className="py-2 px-2 text-zinc-700 dark:text-zinc-300">{p.opis}</td>
+                  <td className="py-2 px-2 text-right text-zinc-500 dark:text-zinc-400">{p.ilosc}</td>
+                  <td className="py-2 px-2 text-right text-zinc-500 dark:text-zinc-400">{formatZl(p.cena)}</td>
+                  <td className="py-2 px-2 text-right text-zinc-500 dark:text-zinc-400">{p.vat}%</td>
+                  <td className="py-2 px-2 text-right">{formatZl(lineNetto)}</td>
+                  <td className="py-2 px-2 text-right font-medium">{formatZl(lineBrutto)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Totals */}
+      <div className="border-t border-zinc-100 dark:border-zinc-800 pt-3 mb-4 space-y-1">
+        {[
+          { label: 'Wartość netto', value: netto },
+          { label: 'VAT', value: vatAmt },
+        ].map(({ label, value }) => (
+          <div key={label} className="flex justify-between text-sm text-zinc-500 dark:text-zinc-400">
+            <span>{label}</span>
+            <span>{formatZl(value)}</span>
+          </div>
+        ))}
+        <div className="flex justify-between text-base font-semibold pt-1">
+          <span>Do zapłaty (brutto)</span>
+          <span>{formatZl(brutto)}</span>
+        </div>
+      </div>
+
+      {/* Payment info */}
+      <div className="text-xs text-zinc-400 dark:text-zinc-500 border-t border-zinc-100 dark:border-zinc-800 pt-3 mb-4">
+        <p>Forma płatności: przelew bankowy</p>
+        <p>Nr konta: {company.nr_konta}</p>
+        {invoice.uwagi && <p>Uwagi: {invoice.uwagi}</p>}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 justify-end flex-wrap">
+        {invoice.status === 'nieoplacona' && onMarkPaid && (
+          <Button
+            variant="primary"
+            onClick={() => {
+              onMarkPaid(invoice.id)
+              onClose()
+            }}
+          >
+            ✓ Oznacz jako opłaconą
+          </Button>
+        )}
+
+        <Button onClick={handleDownloadPDF}>
+          ⬇ Pobierz PDF
+        </Button>
+
+        <Button
+          onClick={handleSendEmail}
+          disabled={emailLoading || emailSent}
+        >
+          {emailSent ? '✓ Wysłano!' : emailLoading ? 'Wysyłanie…' : '✉ Wyślij PDF mailem'}
+        </Button>
+
+        <Button onClick={onClose}>Zamknij</Button>
+      </div>
+    </Modal>
   )
 }
